@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>100 Men vs 1 Gorilla Simulator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.min.js"></script>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        font-family: Arial, sans-serif;
+      }
+      #container {
+        position: relative;
+        width: 100%;
+        height: 100vh;
+      }
+      #startScreen {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        background-color: rgba(0, 0, 0, 0.7);
+        color: white;
+        z-index: 10;
+      }
+      #playButton {
+        padding: 15px 40px;
+        font-size: 24px;
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        margin-top: 20px;
+        transition: background-color 0.3s;
+      }
+      #playButton:hover {
+        background-color: #45a049;
+      }
+      #healthBars {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        background-color: rgba(0, 0, 0, 0.5);
+        padding: 15px;
+        border-radius: 5px;
+        color: white;
+        z-index: 5;
+        display: none;
+      }
+      .healthBar {
+        width: 300px;
+        height: 30px;
+        background-color: #333;
+        margin-bottom: 10px;
+        border-radius: 5px;
+        overflow: hidden;
+      }
+      .healthFill {
+        height: 100%;
+        transition: width 0.3s;
+      }
+      #gorillaHealth .healthFill {
+        background-color: #ff4d4d;
+      }
+      #menHealth .healthFill {
+        background-color: #4d79ff;
+      }
+      .healthLabel {
+        margin-bottom: 5px;
+        font-weight: bold;
+      }
+      #simulationStats {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        background-color: rgba(0, 0, 0, 0.5);
+        padding: 15px;
+        border-radius: 5px;
+        color: white;
+        z-index: 5;
+        display: none;
+      }
+      h1 {
+        font-size: 36px;
+        margin-bottom: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container">
+      <div id="startScreen">
+        <h1>100 Men vs 1 Gorilla</h1>
+        <p>3D Battle Simulation</p>
+        <button id="playButton">Start Simulation</button>
+      </div>
+      <div id="healthBars">
+        <div class="healthLabel">Gorilla Health</div>
+        <div class="healthBar" id="gorillaHealth">
+          <div class="healthFill" style="width: 100%"></div>
+        </div>
+        <div class="healthLabel">100 Men Health</div>
+        <div class="healthBar" id="menHealth">
+          <div class="healthFill" style="width: 100%"></div>
+        </div>
+      </div>
+      <div id="simulationStats">
+        <div>Men Remaining: <span id="menRemaining">100</span></div>
+        <div>Time: <span id="simulationTime">0</span>s</div>
+      </div>
+    </div>
+
+    <script>
+      // Simulation parameters
+      const GORILLA_MAX_HEALTH = 1000;
+      const MAN_MAX_HEALTH = 10;
+      const MEN_COUNT = 100;
+      const GORILLA_ATTACK_DAMAGE = 20;
+      const MAN_ATTACK_DAMAGE = 2;
+      const GORILLA_ATTACK_RADIUS = 10;
+      const MAN_ATTACK_RANGE = 5;
+      const ARENA_SIZE = 100;
+
+      // Strategy parameters
+      const GROUP_SIZE = 4; // Size of attack groups
+      const GROUP_COUNT = Math.floor(MEN_COUNT / GROUP_SIZE);
+      const COORDINATION_BONUS = 1.5; // Damage multiplier when attacking in coordination
+      const SURROUND_POSITIONS = 8; // Number of positions around the gorilla
+
+      // Simulation state
+      let gorillaHealth = GORILLA_MAX_HEALTH;
+      let menTotalHealth = MEN_COUNT * MAN_MAX_HEALTH;
+      let menRemaining = MEN_COUNT;
+      let simulationTime = 0;
+      let simulationRunning = false;
+      let clock = new THREE.Clock();
+
+      // Initialize Three.js scene
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87ceeb); // Sky blue background
+
+      // Create camera
+      const camera = new THREE.PerspectiveCamera(
+        75,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        1000
+      );
+      camera.position.set(0, 70, 100);
+
+      // Create renderer
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      document.getElementById("container").appendChild(renderer.domElement);
+
+      // Create orbit controls for camera
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+
+      // Create lighting
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(50, 100, 50);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.width = 2048;
+      directionalLight.shadow.mapSize.height = 2048;
+      directionalLight.shadow.camera.near = 0.5;
+      directionalLight.shadow.camera.far = 500;
+      directionalLight.shadow.camera.left = -100;
+      directionalLight.shadow.camera.right = 100;
+      directionalLight.shadow.camera.top = 100;
+      directionalLight.shadow.camera.bottom = -100;
+      scene.add(directionalLight);
+
+      // Create ground
+      const groundGeometry = new THREE.PlaneGeometry(
+        ARENA_SIZE * 2,
+        ARENA_SIZE * 2
+      );
+      const groundMaterial = new THREE.MeshStandardMaterial({
+        color: 0x3a5f0b,
+        roughness: 0.8,
+        metalness: 0.2,
+      });
+      const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      // Create gorilla
+      const gorilla = new THREE.Object3D(); // Placeholder until model loads
+      gorilla.position.set(0, 0, 0);
+      gorilla.castShadow = true;
+      gorilla.receiveShadow = true;
+      scene.add(gorilla);
+
+      // Load gorilla model
+      const gorillaLoader = new THREE.GLTFLoader();
+      gorillaLoader.load("gorilla.glb", function (gltf) {
+        const gorillaModel = gltf.scene;
+        // Adjust size and position of the gorilla model
+        gorillaModel.scale.set(0.1, 0.1, 0.1); // Scaled down from 5 to 2
+        gorillaModel.position.y = 0;
+        gorillaModel.castShadow = true;
+        gorillaModel.receiveShadow = true;
+
+        // Add the model to our gorilla object
+        gorilla.add(gorillaModel);
+      });
+
+      // Create gorilla visual health bar
+      const gorillaHealthBarGeometry = new THREE.BoxGeometry(10, 0.5, 0.5);
+      const gorillaHealthBarMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff0000,
+      });
+      const gorillaHealthBar = new THREE.Mesh(
+        gorillaHealthBarGeometry,
+        gorillaHealthBarMaterial
+      );
+      gorillaHealthBar.position.set(0, 15, 0);
+      scene.add(gorillaHealthBar);
+
+      // Create array to store men
+      const men = [];
+      const menPositions = [];
+      const menHealthBars = [];
+      const menAlive = [];
+      const menGroups = [];
+      const targetPositions = [];
+
+      // Generate strategic positions around the gorilla
+      const surroundPositions = [];
+      for (let i = 0; i < SURROUND_POSITIONS; i++) {
+        const angle = (i / SURROUND_POSITIONS) * Math.PI * 2;
+        surroundPositions.push({
+          x: Math.cos(angle) * MAN_ATTACK_RANGE * 1.2,
+          z: Math.sin(angle) * MAN_ATTACK_RANGE * 1.2,
+        });
+      }
+
+      // Human model reference
+      let humanModel = null;
+
+      // Load human model first, then create clones
+      const humanLoader = new THREE.GLTFLoader();
+      humanLoader.load("human.glb", function (gltf) {
+        humanModel = gltf.scene;
+        createMen();
+      });
+
+      // Create the 100 men once the model is loaded
+      function createMen() {
+        for (let i = 0; i < MEN_COUNT; i++) {
+          const radius = (Math.random() * ARENA_SIZE) / 2 + 20; // Distance from center
+          const angle = Math.random() * Math.PI * 2; // Random angle
+          const x = Math.cos(angle) * radius;
+          const z = Math.sin(angle) * radius;
+
+          // Clone the human model
+          const man = new THREE.Object3D();
+          const clonedHuman = humanModel.clone();
+
+          // Adjust scale and position
+          clonedHuman.scale.set(0.05, 0.05, 0.05); // Adjust scale as needed
+          clonedHuman.position.y = 0;
+          clonedHuman.castShadow = true;
+          clonedHuman.receiveShadow = true;
+
+          man.add(clonedHuman);
+          man.position.set(x, 0, z);
+          man.castShadow = true;
+          man.receiveShadow = true;
+
+          scene.add(man);
+          men.push(man);
+          menPositions.push({ x, z });
+          menAlive.push(true);
+
+          // Assign each man to a strategic group
+          const groupId = Math.floor(i / GROUP_SIZE);
+          menGroups[i] = groupId % GROUP_COUNT;
+
+          // Assign target position (for strategic positioning)
+          // Each group will target a specific position around the gorilla
+          const groupPositionIndex = menGroups[i] % SURROUND_POSITIONS;
+          targetPositions[i] = surroundPositions[groupPositionIndex];
+
+          // Create health bar for the man
+          const manHealthBarGeometry = new THREE.BoxGeometry(1, 0.2, 0.2);
+          const manHealthBarMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ff00,
+          });
+          const manHealthBar = new THREE.Mesh(
+            manHealthBarGeometry,
+            manHealthBarMaterial
+          );
+          manHealthBar.position.set(x, 6, z);
+          scene.add(manHealthBar);
+          menHealthBars.push(manHealthBar);
+        }
+      } // End of createMen function
+
+      // Handle window resize
+      window.addEventListener("resize", function () {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      // Start simulation button
+      document
+        .getElementById("playButton")
+        .addEventListener("click", function () {
+          document.getElementById("startScreen").style.display = "none";
+          document.getElementById("healthBars").style.display = "block";
+          document.getElementById("simulationStats").style.display = "block";
+          simulationRunning = true;
+          clock.start();
+          animate();
+        });
+
+      // Simulation logic
+      function updateSimulation(deltaTime) {
+        if (!simulationRunning) return;
+
+        simulationTime += deltaTime;
+        document.getElementById("simulationTime").textContent =
+          Math.floor(simulationTime);
+
+        // Gorilla logic
+        const gorillaAttackChance = 0.05; // 5% chance to attack per update (reduced from 10%)
+        if (Math.random() < gorillaAttackChance) {
+          // Gorilla swings and hits nearby men
+          for (let i = 0; i < men.length; i++) {
+            if (!menAlive[i]) continue;
+
+            const distance = men[i].position.distanceTo(gorilla.position);
+            if (distance < GORILLA_ATTACK_RADIUS) {
+              // Man is hit by gorilla
+              menTotalHealth -= GORILLA_ATTACK_DAMAGE;
+
+              // Simulate this man being knocked out or killed
+              if (Math.random() < 0.3) {
+                // 30% chance to knock out a man
+                menAlive[i] = false;
+                menRemaining--;
+                document.getElementById("menRemaining").textContent =
+                  menRemaining;
+                // Change the appearance of defeated men
+                men[i].traverse(function (child) {
+                  if (child.isMesh && child.material) {
+                    if (Array.isArray(child.material)) {
+                      child.material.forEach((mat) => {
+                        mat.color.set(0x777777);
+                        mat.opacity = 0.7;
+                        mat.transparent = true;
+                      });
+                    } else {
+                      child.material.color.set(0x777777);
+                      child.material.opacity = 0.7;
+                      child.material.transparent = true;
+                    }
+                  }
+                });
+                scene.remove(menHealthBars[i]);
+
+                // Knock them back and down
+                const knockbackDirection = new THREE.Vector3()
+                  .subVectors(men[i].position, gorilla.position)
+                  .normalize();
+                men[i].position.add(knockbackDirection.multiplyScalar(5));
+                men[i].rotation.x = Math.PI / 2; // Lay them flat
+                men[i].position.y = 0.5;
+              }
+            }
+          }
+
+          // Gorilla visual attack
+          gorilla.scale.set(1.2, 1.2, 1.2);
+          // Make gorilla face a random direction during attack
+          gorilla.rotation.y = Math.random() * Math.PI * 2;
+          setTimeout(() => {
+            gorilla.scale.set(1, 1, 1);
+          }, 200);
+        }
+
+        // Men logic
+        for (let i = 0; i < men.length; i++) {
+          if (!menAlive[i]) continue;
+
+          const distanceToGorilla = men[i].position.distanceTo(
+            gorilla.position
+          );
+          const moveSpeed = 0.03 + Math.random() * 0.02; // Reduced movement speed from 0.05-0.1 to 0.03-0.05
+
+          // Group strategy logic
+          const groupId = menGroups[i];
+          const targetPos = targetPositions[i];
+
+          // Calculate strategic target position (relative to gorilla)
+          const targetX = gorilla.position.x + targetPos.x;
+          const targetZ = gorilla.position.z + targetPos.z;
+          const targetPosition = new THREE.Vector3(
+            targetX,
+            men[i].position.y,
+            targetZ
+          );
+
+          // If not at strategic position yet and further than attack range, move to strategic position
+          if (distanceToGorilla > MAN_ATTACK_RANGE * 1.5) {
+            // Move toward strategic position around gorilla
+            const directionToTarget = new THREE.Vector3()
+              .subVectors(targetPosition, men[i].position)
+              .normalize();
+            men[i].position.add(directionToTarget.multiplyScalar(moveSpeed));
+          } else if (distanceToGorilla > MAN_ATTACK_RANGE) {
+            // In strategic position but not yet in attack range, approach carefully
+            const directionToGorilla = new THREE.Vector3()
+              .subVectors(gorilla.position, men[i].position)
+              .normalize();
+            men[i].position.add(
+              directionToGorilla.multiplyScalar(moveSpeed * 0.7)
+            );
+          } else {
+            // In attack range - implement coordinated attack pattern
+
+            // Count how many men from the same group are also in attack range
+            let groupMembersInRange = 0;
+            for (let j = 0; j < men.length; j++) {
+              if (
+                menAlive[j] &&
+                menGroups[j] === groupId &&
+                men[j].position.distanceTo(gorilla.position) <= MAN_ATTACK_RANGE
+              ) {
+                groupMembersInRange++;
+              }
+            }
+
+            // Coordinated attack - more likely to attack if other group members are in position
+            const coordinationFactor = Math.min(
+              1,
+              groupMembersInRange / GROUP_SIZE
+            );
+            if (Math.random() < 0.02 + 0.02 * coordinationFactor) {
+              // Calculate damage based on coordination
+              let damage = MAN_ATTACK_DAMAGE;
+              if (groupMembersInRange >= GROUP_SIZE / 2) {
+                damage *= COORDINATION_BONUS; // Apply coordination bonus
+              }
+
+              gorillaHealth -= damage;
+
+              // Visual attack
+              men[i].scale.set(1.3, 1.3, 1.3);
+              setTimeout(() => {
+                if (menAlive[i]) {
+                  // Reset scale on the parent object, not the model inside
+                  men[i].scale.set(1, 1, 1);
+                }
+              }, 100);
+            }
+
+            // Tactical movement - slightly reposition while in attack range
+            if (Math.random() < 0.05) {
+              const angle = Math.random() * Math.PI * 0.5 - Math.PI * 0.25;
+              const currentAngle = Math.atan2(
+                men[i].position.z - gorilla.position.z,
+                men[i].position.x - gorilla.position.x
+              );
+              const newAngle = currentAngle + angle;
+              const newX =
+                gorilla.position.x + Math.cos(newAngle) * MAN_ATTACK_RANGE;
+              const newZ =
+                gorilla.position.z + Math.sin(newAngle) * MAN_ATTACK_RANGE;
+
+              // Move slightly to new tactical position
+              const newPosition = new THREE.Vector3(
+                newX,
+                men[i].position.y,
+                newZ
+              );
+              const directionToNew = new THREE.Vector3()
+                .subVectors(newPosition, men[i].position)
+                .normalize();
+              men[i].position.add(
+                directionToNew.multiplyScalar(moveSpeed * 0.5)
+              );
+              // Orient model to face the direction of movement
+              men[i].lookAt(newPosition);
+            }
+          }
+
+          // Update man health bar position to follow man
+          if (menHealthBars[i]) {
+            menHealthBars[i].position.x = men[i].position.x;
+            menHealthBars[i].position.z = men[i].position.z;
+          }
+        }
+
+        // Update health bars
+        document.querySelector("#gorillaHealth .healthFill").style.width =
+          Math.max(0, (gorillaHealth / GORILLA_MAX_HEALTH) * 100) + "%";
+        document.querySelector("#menHealth .healthFill").style.width =
+          Math.max(0, (menTotalHealth / (MEN_COUNT * MAN_MAX_HEALTH)) * 100) +
+          "%";
+
+        // Update 3D gorilla health bar
+        const gorillaHealthPercent = Math.max(
+          0,
+          gorillaHealth / GORILLA_MAX_HEALTH
+        );
+        gorillaHealthBar.scale.x = gorillaHealthPercent;
+        gorillaHealthBar.position.x = (gorillaHealthPercent - 1) * 5;
+
+        // Check for simulation end
+        if (gorillaHealth <= 0 || menRemaining <= 0) {
+          // Removed menTotalHealth condition that was ending the game prematurely
+          simulationRunning = false;
+          let result = "";
+
+          if (gorillaHealth <= 0) {
+            result = "The 100 men have defeated the gorilla!";
+          } else {
+            result = "The gorilla has defeated all 100 men!";
+          }
+
+          // Show results
+          const resultScreen = document.createElement("div");
+          resultScreen.style.cssText =
+            "position:absolute; top:0; left:0; width:100%; height:100%; background-color:rgba(0,0,0,0.7); color:white; display:flex; flex-direction:column; justify-content:center; align-items:center; z-index:20;";
+          resultScreen.innerHTML = `<h1>${result}</h1><p>Simulation Time: ${Math.floor(
+            simulationTime
+          )} seconds</p><p>Men Remaining: ${menRemaining}</p><button id="restartButton" style="padding:15px 40px; font-size:24px; background-color:#4CAF50; color:white; border:none; border-radius:5px; cursor:pointer; margin-top:20px;">Restart Simulation</button>`;
+          document.getElementById("container").appendChild(resultScreen);
+
+          document
+            .getElementById("restartButton")
+            .addEventListener("click", function () {
+              window.location.reload();
+            });
+        }
+      }
+
+      // Animation loop
+      function animate() {
+        requestAnimationFrame(animate);
+
+        if (simulationRunning) {
+          const deltaTime = clock.getDelta();
+          updateSimulation(deltaTime);
+
+          // Rotate gorilla occasionally
+          if (Math.random() < 0.01) {
+            gorilla.rotation.y = Math.random() * Math.PI * 2;
+          }
+        }
+
+        controls.update();
+        renderer.render(scene, camera);
+      }
+    </script>
+  </body>
+</html>
